@@ -1,12 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
 
-export function requireApiKey(req: Request, res: Response, next: NextFunction): void {
-  const expectedApiKey = process.env.API_KEY;
+import { getEnv } from "../../lib/env.js";
 
-  if (!expectedApiKey) {
-    res.status(500).json({ error: "Server misconfiguration: API_KEY is missing" });
-    return;
-  }
+export function requireApiKey(req: Request, res: Response, next: NextFunction): void {
+  const expectedApiKey = getEnv().apiKey;
 
   const providedApiKey = req.header("X-API-Key");
 
