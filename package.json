@@ -1,0 +1,40 @@
+{
+  "name": "wpml-llm-translator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LLM-powered translation pipeline for WPML XLIFF files with human review and safe re-import.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/api/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "tsx --test src/**/*.test.ts",
+    "start": "node dist/api/server.js",
+    "ingest": "tsx src/cli/ingest.ts",
+    "rebuild": "tsx src/cli/rebuild.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.50.2",
+    "@xmldom/xmldom": "^0.8.11",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "fast-xml-parser": "^5.3.1",
+    "openai": "^6.6.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
+    "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.5.2",
+    "@types/swagger-jsdoc": "^6.0.4",
+    "@types/swagger-ui-express": "^4.1.8",
+    "@types/yargs": "^17.0.33",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
