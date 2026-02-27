@@ -115,21 +115,31 @@ async function main(): Promise<void> {
 
     const unitsToInsert: Array<Record<string, string | null>> = [];
 
-    for (const unit of parsed.units) {
+    for (let i = 0; i < parsed.units.length; i++) {
+      const unit = parsed.units[i]!;
       let machineText: string | null = null;
+      const label = unit.resname ?? unit.unitKey;
+      const preview = unit.sourceText.length > 50 ? unit.sourceText.slice(0, 50) + "…" : unit.sourceText;
 
       try {
-        machineText = await translateWithOpenRouter({
+        const result = await translateWithOpenRouter({
           sourceLang: args.sourceLang,
           targetLang: args.targetLang,
           resname: unit.resname,
           restype: unit.restype,
           sourceText: unit.sourceText
         });
+        machineText = result.text;
+
+        const tokens = result.promptTokens !== null && result.completionTokens !== null
+          ? ` ${result.promptTokens}+${result.completionTokens} tok`
+          : "";
+        console.log(`[translate] ${i + 1}/${parsed.units.length} "${label}" (${result.durationMs}ms${tokens})`);
       } catch (error) {
         llmFailures += 1;
         const message = error instanceof Error ? error.message : "unknown error";
-        console.error(`[ingest] LLM failed for ${fileKey}#${unit.unitKey}: ${message}`);
+        console.error(`[translate] ${i + 1}/${parsed.units.length} "${label}" FAILED: ${message}`);
+        console.error(`[translate]   source: "${preview}"`);
       }
 
       unitsToInsert.push({

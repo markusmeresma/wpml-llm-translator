@@ -82,10 +82,19 @@ function extractTextContent(content: unknown): string {
   return "";
 }
 
-export async function translateWithOpenRouter(input: TranslateUnitInput): Promise<string> {
+export interface TranslateResult {
+  text: string;
+  durationMs: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+}
+
+export async function translateWithOpenRouter(input: TranslateUnitInput): Promise<TranslateResult> {
   const env = getEnv();
   const client = getOpenRouterClient();
   const prompt = buildPrompt(input);
+
+  const start = performance.now();
 
   const completion = await client.chat.completions.create({
     model: env.openRouterModel,
@@ -98,6 +107,8 @@ export async function translateWithOpenRouter(input: TranslateUnitInput): Promis
     ]
   });
 
+  const durationMs = Math.round(performance.now() - start);
+
   const content = completion.choices[0]?.message?.content;
   const translatedText = extractTextContent(content);
 
@@ -105,5 +116,10 @@ export async function translateWithOpenRouter(input: TranslateUnitInput): Promis
     throw new Error("OpenRouter returned an empty translation");
   }
 
-  return translatedText;
+  return {
+    text: translatedText,
+    durationMs,
+    promptTokens: completion.usage?.prompt_tokens ?? null,
+    completionTokens: completion.usage?.completion_tokens ?? null
+  };
 }
