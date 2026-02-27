@@ -5,7 +5,6 @@ import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 
 import { getEnv } from "../lib/env.js";
-import { translateWithOpenRouter } from "../lib/openrouter.js";
 import { getSupabaseAdminClient } from "../lib/supabase.js";
 import { parseXliffFile } from "../lib/xliff-parser.js";
 
@@ -89,8 +88,6 @@ async function main(): Promise<void> {
   }
 
   let totalUnits = 0;
-  let llmFailures = 0;
-
   for (const fileKey of xliffFiles) {
     const fullPath = path.join(env.inboxDir, fileKey);
     const xml = await fs.readFile(fullPath, "utf8");
@@ -117,31 +114,6 @@ async function main(): Promise<void> {
 
     for (let i = 0; i < parsed.units.length; i++) {
       const unit = parsed.units[i]!;
-      let machineText: string | null = null;
-      const label = unit.resname ?? unit.unitKey;
-      const preview = unit.sourceText.length > 50 ? unit.sourceText.slice(0, 50) + "…" : unit.sourceText;
-
-      try {
-        const result = await translateWithOpenRouter({
-          sourceLang: args.sourceLang,
-          targetLang: args.targetLang,
-          resname: unit.resname,
-          restype: unit.restype,
-          sourceText: unit.sourceText
-        });
-        machineText = result.text;
-
-        const tokens = result.promptTokens !== null && result.completionTokens !== null
-          ? ` ${result.promptTokens}+${result.completionTokens} tok`
-          : "";
-        console.log(`[translate] ${i + 1}/${parsed.units.length} "${label}" (${result.durationMs}ms${tokens})`);
-      } catch (error) {
-        llmFailures += 1;
-        const message = error instanceof Error ? error.message : "unknown error";
-        console.error(`[translate] ${i + 1}/${parsed.units.length} "${label}" FAILED: ${message}`);
-        console.error(`[translate]   source: "${preview}"`);
-      }
-
       unitsToInsert.push({
         project_id: project.id,
         file_id: fileRecord.id,
@@ -149,7 +121,7 @@ async function main(): Promise<void> {
         resname: unit.resname,
         restype: unit.restype,
         source_text: unit.sourceText,
-        machine_text: machineText
+        machine_text: null
       });
     }
 
@@ -166,7 +138,7 @@ async function main(): Promise<void> {
 
   console.log(`[ingest] Complete`);
   console.log(`[ingest] Project ID: ${project.id}`);
-  console.log(`[ingest] Files: ${xliffFiles.length}, Units: ${totalUnits}, LLM failures: ${llmFailures}`);
+  console.log(`[ingest] Files: ${xliffFiles.length}, Units: ${totalUnits}`);
 }
 
 main().catch((error: unknown) => {
