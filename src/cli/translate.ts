@@ -1,13 +1,15 @@
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 
+import { type SupabaseClient } from "@supabase/supabase-js";
+
 import { translateWithOpenRouter } from "../lib/openrouter.js";
-import { resolveProject } from "../lib/resolve-project.js";
+import { type ProjectInfo, resolveProject } from "../lib/resolve-project.js";
 import { getSupabaseAdminClient } from "../lib/supabase.js";
 import { extractProse, isTranslatable } from "../lib/translatable.js";
 
 interface CliArgs {
-  project: string;
+  project?: string;
 }
 
 interface UnitRow {
@@ -35,8 +37,7 @@ async function parseCliArgs(): Promise<CliArgs> {
   const argv = await yargs(hideBin(process.argv))
     .option("project", {
       type: "string",
-      demandOption: true,
-      description: "Project name (subdirectory name)"
+      description: "Project name (omit to translate all projects)"
     })
     .strict()
     .parse();
@@ -44,12 +45,7 @@ async function parseCliArgs(): Promise<CliArgs> {
   return { project: argv.project };
 }
 
-async function main(): Promise<void> {
-  const args = await parseCliArgs();
-  const supabase = getSupabaseAdminClient();
-
-  const project = await resolveProject(supabase, args.project);
-
+async function translateProject(supabase: SupabaseClient, project: ProjectInfo): Promise<void> {
   const { data: units, error: unitsError } = await supabase
     .from("units")
     .select("id,unit_key,resname,restype,source_text")
@@ -115,10 +111,42 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log(`[translate] Complete`);
+  console.log(`[translate] Complete for "${project.name}"`);
   console.log(
     `[translate] Units: ${units.length}, translated: ${translated}, skipped: ${skipped}, failures: ${failures}`
   );
+}
+
+async function main(): Promise<void> {
+  const args = await parseCliArgs();
+  const supabase = getSupabaseAdminClient();
+
+  let projects: ProjectInfo[];
+
+  if (args.project) {
+    projects = [await resolveProject(supabase, args.project)];
+  } else {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id,name,source_lang,target_lang")
+      .order("name", { ascending: true })
+      .returns<ProjectInfo[]>();
+
+    if (error || !data) {
+      throw new Error(`Failed to load projects: ${error?.message ?? "unknown error"}`);
+    }
+
+    if (data.length === 0) {
+      throw new Error("No projects found. Run ingest first.");
+    }
+
+    projects = data;
+    console.log(`[translate] Discovered ${projects.length} project(s): ${projects.map((p) => p.name).join(", ")}`);
+  }
+
+  for (const project of projects) {
+    await translateProject(supabase, project);
+  }
 }
 
 main().catch((error: unknown) => {
