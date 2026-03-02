@@ -49,8 +49,11 @@ npm run ingest -- --project front-page --source-lang en --target-lang pl
 # Ingest ALL subdirectories at once
 npm run ingest -- --source-lang en --target-lang pl
 
-# Translate by project name
+# Translate one project
 npm run translate -- --project front-page
+
+# Translate ALL projects
+npm run translate
 
 # Rebuild by project name → writes to outbox/front-page/
 npm run rebuild -- --project front-page
