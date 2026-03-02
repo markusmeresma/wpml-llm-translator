@@ -5,6 +5,7 @@ import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 
 import { getEnv } from "../lib/env.js";
+import { reassembleHtml } from "../lib/html-splitter.js";
 import { resolveProject } from "../lib/resolve-project.js";
 import { getSupabaseAdminClient } from "../lib/supabase.js";
 import { rebuildXliffTargets } from "../lib/xliff-writer.js";
@@ -27,6 +28,9 @@ interface UnitRow {
   machine_text: string | null;
   review_text: string | null;
   status: UnitStatus;
+  source_html_template: string | null;
+  parent_unit_id: string | null;
+  segment_index: number | null;
 }
 
 function getFinalText(unit: UnitRow): string {
@@ -62,7 +66,7 @@ async function main(): Promise<void> {
       .returns<FileRow[]>(),
     supabase
       .from("units")
-      .select("id,file_id,unit_key,machine_text,review_text,status")
+      .select("id,file_id,unit_key,machine_text,review_text,status,source_html_template,parent_unit_id,segment_index")
       .eq("project_id", project.id)
       .returns<UnitRow[]>()
   ]);
@@ -82,11 +86,13 @@ async function main(): Promise<void> {
     throw new Error(`No files found for project "${project.name}"`);
   }
 
-  const notVerifiedUnits = units.filter((unit) => unit.status !== "verified");
+  // Compound parents don't need to be verified themselves — their sub-units do
+  const verifiableUnits = units.filter((unit) => !unit.source_html_template);
+  const notVerifiedUnits = verifiableUnits.filter((unit) => unit.status !== "verified");
 
   if (notVerifiedUnits.length > 0) {
     throw new Error(
-      `Project is not ready: ${notVerifiedUnits.length} of ${units.length} unit(s) are not verified`
+      `Project is not ready: ${notVerifiedUnits.length} of ${verifiableUnits.length} unit(s) are not verified`
     );
   }
 
@@ -97,8 +103,39 @@ async function main(): Promise<void> {
     const fileUnits = units.filter((unit) => unit.file_id === file.id);
     const translationsByUnitKey = new Map<string, string>();
 
+    // Identify compound parents and their sub-units
+    const compoundParents = fileUnits.filter((u) => u.source_html_template);
+    const subUnitsByParent = new Map<string, UnitRow[]>();
+
     for (const unit of fileUnits) {
-      translationsByUnitKey.set(unit.unit_key, getFinalText(unit));
+      if (unit.parent_unit_id) {
+        const siblings = subUnitsByParent.get(unit.parent_unit_id) ?? [];
+        siblings.push(unit);
+        subUnitsByParent.set(unit.parent_unit_id, siblings);
+      }
+    }
+
+    // Reassemble compound units
+    for (const parent of compoundParents) {
+      const subUnits = subUnitsByParent.get(parent.id) ?? [];
+      subUnits.sort((a, b) => (a.segment_index ?? 0) - (b.segment_index ?? 0));
+
+      const segments = new Map<number, string>();
+      for (const sub of subUnits) {
+        if (sub.segment_index !== null) {
+          segments.set(sub.segment_index, getFinalText(sub));
+        }
+      }
+
+      const reassembled = reassembleHtml(parent.source_html_template!, segments);
+      translationsByUnitKey.set(parent.unit_key, reassembled);
+    }
+
+    // Regular units (not compound parents, not sub-units)
+    for (const unit of fileUnits) {
+      if (!unit.source_html_template && !unit.parent_unit_id) {
+        translationsByUnitKey.set(unit.unit_key, getFinalText(unit));
+      }
     }
 
     const sourcePath = path.join(env.inboxDir, project.name, file.file_key);

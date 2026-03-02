@@ -16,6 +16,8 @@ interface UnitRow {
   review_text: string | null;
   status: UnitStatus;
   updated_at: string;
+  parent_unit_id: string | null;
+  segment_index: number | null;
 }
 
 interface UnitPatchRequest {
@@ -36,7 +38,7 @@ router.get("/:id", async (req, res) => {
   const { data, error } = await supabase
     .from("units")
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index"
     )
     .eq("id", unitId)
     .single<UnitRow>();
@@ -73,7 +75,7 @@ router.patch("/:id", async (req, res) => {
   const { data: currentUnit, error: currentUnitError } = await supabase
     .from("units")
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index"
     )
     .eq("id", unitId)
     .single<UnitRow>();
@@ -116,7 +118,7 @@ router.patch("/:id", async (req, res) => {
     .update(updatePayload)
     .eq("id", unitId)
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index"
     )
     .single<UnitRow>();
 

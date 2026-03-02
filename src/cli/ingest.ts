@@ -8,8 +8,10 @@ import { getEnv } from "../lib/env.js";
 import { getSupabaseAdminClient } from "../lib/supabase.js";
 import { parseXliffFile } from "../lib/xliff-parser.js";
 
+import { type SupabaseClient } from "@supabase/supabase-js";
+
 interface CliArgs {
-  projectName: string;
+  project?: string;
   sourceLang: string;
   targetLang: string;
 }
@@ -24,10 +26,9 @@ interface FileRow {
 
 async function parseCliArgs(): Promise<CliArgs> {
   const argv = await yargs(hideBin(process.argv))
-    .option("project-name", {
+    .option("project", {
       type: "string",
-      demandOption: true,
-      description: "Human-readable project name"
+      description: "Subdirectory name to ingest (omit to ingest all subdirectories)"
     })
     .option("source-lang", {
       type: "string",
@@ -43,14 +44,23 @@ async function parseCliArgs(): Promise<CliArgs> {
     .parse();
 
   return {
-    projectName: argv["project-name"],
+    project: argv.project,
     sourceLang: argv["source-lang"],
     targetLang: argv["target-lang"]
   };
 }
 
-async function listXliffFiles(inboxDir: string): Promise<string[]> {
+async function discoverProjectDirs(inboxDir: string): Promise<string[]> {
   const entries = await fs.readdir(inboxDir, { withFileTypes: true });
+
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+async function listXliffFiles(dir: string): Promise<string[]> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
 
   return entries
     .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".xliff"))
@@ -58,38 +68,41 @@ async function listXliffFiles(inboxDir: string): Promise<string[]> {
     .sort((a, b) => a.localeCompare(b));
 }
 
-async function main(): Promise<void> {
-  const env = getEnv();
-  const args = await parseCliArgs();
-  const supabase = getSupabaseAdminClient();
-
-  const xliffFiles = await listXliffFiles(env.inboxDir);
+async function ingestProject(
+  supabase: SupabaseClient,
+  name: string,
+  dir: string,
+  sourceLang: string,
+  targetLang: string
+): Promise<void> {
+  const xliffFiles = await listXliffFiles(dir);
 
   if (xliffFiles.length === 0) {
-    throw new Error(`No .xliff files found in ${env.inboxDir}`);
+    console.log(`[ingest] Skipping "${name}" — no .xliff files found`);
+    return;
   }
 
-  console.log(`[ingest] Starting project "${args.projectName}"`);
-  console.log(`[ingest] Source=${args.sourceLang} Target=${args.targetLang}`);
-  console.log(`[ingest] Found ${xliffFiles.length} file(s) in ${env.inboxDir}`);
+  console.log(`[ingest] Starting project "${name}"`);
+  console.log(`[ingest] Source=${sourceLang} Target=${targetLang}`);
+  console.log(`[ingest] Found ${xliffFiles.length} file(s) in ${dir}`);
 
   const { data: project, error: projectError } = await supabase
     .from("projects")
     .insert({
-      name: args.projectName,
-      source_lang: args.sourceLang,
-      target_lang: args.targetLang
+      name,
+      source_lang: sourceLang,
+      target_lang: targetLang
     })
     .select("id")
     .single<ProjectRow>();
 
   if (projectError || !project) {
-    throw new Error(`Failed to create project: ${projectError?.message ?? "unknown error"}`);
+    throw new Error(`Failed to create project "${name}": ${projectError?.message ?? "unknown error"}`);
   }
 
   let totalUnits = 0;
   for (const fileKey of xliffFiles) {
-    const fullPath = path.join(env.inboxDir, fileKey);
+    const fullPath = path.join(dir, fileKey);
     const xml = await fs.readFile(fullPath, "utf8");
     const parsed = parseXliffFile({ fileKey, xml });
 
@@ -110,35 +123,120 @@ async function main(): Promise<void> {
 
     console.log(`[ingest] Processing ${fileKey} (${parsed.units.length} unit(s))`);
 
-    const unitsToInsert: Array<Record<string, string | null>> = [];
+    let insertedUnitCount = 0;
 
-    for (let i = 0; i < parsed.units.length; i++) {
-      const unit = parsed.units[i]!;
-      unitsToInsert.push({
-        project_id: project.id,
-        file_id: fileRecord.id,
-        unit_key: unit.unitKey,
-        resname: unit.resname,
-        restype: unit.restype,
-        source_text: unit.sourceText,
-        machine_text: null
-      });
-    }
+    for (const unit of parsed.units) {
+      if (unit.segments && unit.sourceHtmlTemplate) {
+        // Compound unit: insert parent with template, then sub-units
+        const { data: parentRow, error: parentError } = await supabase
+          .from("units")
+          .insert({
+            project_id: project.id,
+            file_id: fileRecord.id,
+            unit_key: unit.unitKey,
+            resname: unit.resname,
+            restype: unit.restype,
+            source_text: unit.sourceText,
+            source_html_template: unit.sourceHtmlTemplate,
+            machine_text: null
+          })
+          .select("id")
+          .single<{ id: string }>();
 
-    if (unitsToInsert.length > 0) {
-      const { error: unitsError } = await supabase.from("units").insert(unitsToInsert);
+        if (parentError || !parentRow) {
+          throw new Error(
+            `Failed to insert compound parent unit ${unit.unitKey}: ${parentError?.message ?? "unknown error"}`
+          );
+        }
 
-      if (unitsError) {
-        throw new Error(`Failed to insert units for ${fileKey}: ${unitsError.message}`);
+        const subUnits = unit.segments.map((seg) => ({
+          project_id: project.id,
+          file_id: fileRecord.id,
+          unit_key: `${unit.unitKey}::seg-${seg.index}`,
+          resname: unit.resname ? `${unit.resname} [${seg.index}]` : null,
+          restype: unit.restype,
+          source_text: seg.text,
+          machine_text: null,
+          parent_unit_id: parentRow.id,
+          segment_index: seg.index
+        }));
+
+        const { error: subError } = await supabase.from("units").insert(subUnits);
+
+        if (subError) {
+          throw new Error(
+            `Failed to insert sub-units for ${unit.unitKey}: ${subError.message}`
+          );
+        }
+
+        insertedUnitCount += 1 + subUnits.length;
+        console.log(
+          `[ingest]   Compound unit "${unit.unitKey}" → ${subUnits.length} segment(s)`
+        );
+      } else {
+        // Regular unit
+        const { error: unitError } = await supabase.from("units").insert({
+          project_id: project.id,
+          file_id: fileRecord.id,
+          unit_key: unit.unitKey,
+          resname: unit.resname,
+          restype: unit.restype,
+          source_text: unit.sourceText,
+          machine_text: null
+        });
+
+        if (unitError) {
+          throw new Error(`Failed to insert unit ${unit.unitKey}: ${unitError.message}`);
+        }
+
+        insertedUnitCount += 1;
       }
     }
 
-    totalUnits += parsed.units.length;
+    totalUnits += insertedUnitCount;
   }
 
-  console.log(`[ingest] Complete`);
+  console.log(`[ingest] Complete for "${name}"`);
   console.log(`[ingest] Project ID: ${project.id}`);
   console.log(`[ingest] Files: ${xliffFiles.length}, Units: ${totalUnits}`);
+}
+
+async function main(): Promise<void> {
+  const env = getEnv();
+  const args = await parseCliArgs();
+  const supabase = getSupabaseAdminClient();
+
+  let projectNames: string[];
+
+  if (args.project) {
+    const projectDir = path.join(env.inboxDir, args.project);
+    try {
+      const stat = await fs.stat(projectDir);
+      if (!stat.isDirectory()) {
+        throw new Error(`"${args.project}" exists but is not a directory in ${env.inboxDir}`);
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`Subdirectory "${args.project}" not found in ${env.inboxDir}`);
+      }
+      throw error;
+    }
+    projectNames = [args.project];
+  } else {
+    projectNames = await discoverProjectDirs(env.inboxDir);
+    if (projectNames.length === 0) {
+      throw new Error(
+        `No subdirectories found in ${env.inboxDir}. ` +
+        `Create a subdirectory per project (e.g. ${env.inboxDir}/my-project/) and place .xliff files inside.`
+      );
+    }
+    console.log(`[ingest] Discovered ${projectNames.length} project(s): ${projectNames.join(", ")}`);
+  }
+
+  for (const name of projectNames) {
+    const dir = path.join(env.inboxDir, name);
+    await ingestProject(supabase, name, dir, args.sourceLang, args.targetLang);
+  }
 }
 
 main().catch((error: unknown) => {

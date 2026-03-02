@@ -61,6 +61,7 @@ router.get("/", async (_req, res) => {
   const { data: unitRows, error: unitError } = await supabase
     .from("units")
     .select("project_id,status")
+    .is("source_html_template", null)
     .returns<UnitCountRow[]>();
 
   if (unitError || !unitRows) {
@@ -109,11 +110,16 @@ router.get("/:id", async (req, res) => {
   }
 
   const [totalResult, verifiedResult] = await Promise.all([
-    supabase.from("units").select("*", { count: "exact", head: true }).eq("project_id", projectId),
     supabase
       .from("units")
       .select("*", { count: "exact", head: true })
       .eq("project_id", projectId)
+      .is("source_html_template", null),
+    supabase
+      .from("units")
+      .select("*", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .is("source_html_template", null)
       .eq("status", "verified")
   ]);
 
@@ -152,9 +158,10 @@ router.get("/:id/units", async (req, res) => {
   let query = supabase
     .from("units")
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index"
     )
     .eq("project_id", projectId)
+    .is("source_html_template", null)
     .range(offset, offset + limit - 1)
     .order("updated_at", { ascending: true });
 
@@ -183,11 +190,16 @@ router.get("/:id/readiness", async (req, res) => {
   const projectId = req.params.id;
 
   const [totalResult, verifiedResult] = await Promise.all([
-    supabase.from("units").select("*", { count: "exact", head: true }).eq("project_id", projectId),
     supabase
       .from("units")
       .select("*", { count: "exact", head: true })
       .eq("project_id", projectId)
+      .is("source_html_template", null),
+    supabase
+      .from("units")
+      .select("*", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .is("source_html_template", null)
       .eq("status", "verified")
   ]);
 

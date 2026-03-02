@@ -1,10 +1,19 @@
 import { DOMParser } from "@xmldom/xmldom";
 
+import { splitHtmlIntoSegments } from "./html-splitter.js";
+
+export interface HtmlSegment {
+  index: number;
+  text: string;
+}
+
 export interface ParsedXliffUnit {
   unitKey: string;
   resname: string | null;
   restype: string | null;
   sourceText: string;
+  sourceHtmlTemplate?: string;
+  segments?: HtmlSegment[];
 }
 
 export interface ParsedXliffFile {
@@ -97,12 +106,25 @@ export function parseXliffFile(options: ParseXliffOptions): ParsedXliffFile {
       throw new Error(`trans-unit ${unitKey} has no <source> in ${options.fileKey}`);
     }
 
-    units.push({
+    const sourceText = getFirstElementText(sourceNode);
+    const splitResult = splitHtmlIntoSegments(sourceText);
+
+    const unit: ParsedXliffUnit = {
       unitKey,
       resname: unitNode.getAttribute("resname"),
       restype: unitNode.getAttribute("restype"),
-      sourceText: getFirstElementText(sourceNode)
-    });
+      sourceText
+    };
+
+    if (splitResult) {
+      unit.sourceHtmlTemplate = splitResult.template;
+      unit.segments = splitResult.segments.map((text, i) => ({
+        index: i + 1,
+        text
+      }));
+    }
+
+    units.push(unit);
   }
 
   return {
