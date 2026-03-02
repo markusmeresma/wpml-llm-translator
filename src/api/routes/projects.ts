@@ -82,17 +82,17 @@ router.get("/", async (_req, res) => {
     countsByProject.set(row.project_id, counts);
   }
 
-  res.json(
-    projects.map((project) => {
-      const counts = countsByProject.get(project.id) ?? { total: 0, verified: 0 };
+  const enriched = projects.map((project) => {
+    const counts = countsByProject.get(project.id) ?? { total: 0, verified: 0 };
 
-      return {
-        ...project,
-        total_units: counts.total,
-        verified_units: counts.verified
-      };
-    })
-  );
+    return {
+      ...project,
+      total_units: counts.total,
+      verified_units: counts.verified
+    };
+  });
+
+  res.json({ projects: enriched, total: enriched.length });
 });
 
 router.get("/:id", async (req, res) => {
@@ -155,7 +155,7 @@ router.get("/:id/units", async (req, res) => {
     return;
   }
 
-  let query = supabase
+  let dataQuery = supabase
     .from("units")
     .select(
       "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index"
@@ -165,25 +165,40 @@ router.get("/:id/units", async (req, res) => {
     .range(offset, offset + limit - 1)
     .order("updated_at", { ascending: true });
 
+  let countQuery = supabase
+    .from("units")
+    .select("*", { count: "exact", head: true })
+    .eq("project_id", projectId)
+    .is("source_html_template", null);
+
   if (status) {
-    query = query.eq("status", String(status));
+    dataQuery = dataQuery.eq("status", String(status));
+    countQuery = countQuery.eq("status", String(status));
   }
 
   if (search && typeof search === "string" && search.trim()) {
     const term = search.trim().replaceAll(",", " ");
-    query = query.or(
-      `source_text.ilike.%${term}%,machine_text.ilike.%${term}%,review_text.ilike.%${term}%`
-    );
+    const orFilter = `source_text.ilike.%${term}%,machine_text.ilike.%${term}%,review_text.ilike.%${term}%`;
+    dataQuery = dataQuery.or(orFilter);
+    countQuery = countQuery.or(orFilter);
   }
 
-  const { data, error } = await query.returns<UnitRow[]>();
+  const [{ data, error }, { count, error: countError }] = await Promise.all([
+    dataQuery.returns<UnitRow[]>(),
+    countQuery
+  ]);
 
   if (error || !data) {
     res.status(500).json({ error: error?.message ?? "Failed to load units" });
     return;
   }
 
-  res.json(data);
+  if (countError) {
+    res.status(500).json({ error: countError.message ?? "Failed to count units" });
+    return;
+  }
+
+  res.json({ units: data, total: count ?? 0, limit, offset });
 });
 
 router.get("/:id/readiness", async (req, res) => {
