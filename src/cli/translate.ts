@@ -6,7 +6,6 @@ import { type SupabaseClient } from "@supabase/supabase-js";
 import { translateWithOpenRouter } from "../lib/openrouter.js";
 import { type ProjectInfo, resolveProject } from "../lib/resolve-project.js";
 import { getSupabaseAdminClient } from "../lib/supabase.js";
-import { extractProse, isTranslatable } from "../lib/translatable.js";
 
 interface CliArgs {
   project?: string;
@@ -18,11 +17,6 @@ interface UnitRow {
   resname: string | null;
   restype: string | null;
   source_text: string;
-}
-
-function countWords(input: string): number {
-  const words = input.match(/[\p{L}\p{N}]+(?:[''-][\p{L}\p{N}]+)*/gu) ?? [];
-  return words.length;
 }
 
 function buildPreview(input: string, maxLength = 80): string {
@@ -63,22 +57,11 @@ async function translateProject(supabase: SupabaseClient, project: ProjectInfo):
   console.log(`[translate] Units pending translation: ${units.length}`);
 
   let translated = 0;
-  let skipped = 0;
   let failures = 0;
 
   for (let i = 0; i < units.length; i++) {
     const unit = units[i]!;
     const label = unit.resname ?? unit.unit_key;
-
-    if (!isTranslatable(unit.source_text)) {
-      const prose = extractProse(unit.source_text);
-      const wordCount = countWords(prose);
-      skipped += 1;
-      console.log(
-        `[translate] ${i + 1}/${units.length} "${label}" SKIP not translatable (${wordCount} word(s))`
-      );
-      continue;
-    }
 
     try {
       const result = await translateWithOpenRouter({
@@ -113,7 +96,7 @@ async function translateProject(supabase: SupabaseClient, project: ProjectInfo):
 
   console.log(`[translate] Complete for "${project.name}"`);
   console.log(
-    `[translate] Units: ${units.length}, translated: ${translated}, skipped: ${skipped}, failures: ${failures}`
+    `[translate] Units: ${units.length}, translated: ${translated}, failures: ${failures}`
   );
 }
 
