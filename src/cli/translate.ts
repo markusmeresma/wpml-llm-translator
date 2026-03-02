@@ -2,17 +2,12 @@ import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 
 import { translateWithOpenRouter } from "../lib/openrouter.js";
+import { resolveProject } from "../lib/resolve-project.js";
 import { getSupabaseAdminClient } from "../lib/supabase.js";
 import { extractProse, isTranslatable } from "../lib/translatable.js";
 
 interface CliArgs {
-  projectId: string;
-}
-
-interface ProjectRow {
-  id: string;
-  source_lang: string;
-  target_lang: string;
+  project: string;
 }
 
 interface UnitRow {
@@ -24,7 +19,7 @@ interface UnitRow {
 }
 
 function countWords(input: string): number {
-  const words = input.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) ?? [];
+  const words = input.match(/[\p{L}\p{N}]+(?:[''-][\p{L}\p{N}]+)*/gu) ?? [];
   return words.length;
 }
 
@@ -38,37 +33,27 @@ function buildPreview(input: string, maxLength = 80): string {
 
 async function parseCliArgs(): Promise<CliArgs> {
   const argv = await yargs(hideBin(process.argv))
-    .option("project-id", {
+    .option("project", {
       type: "string",
       demandOption: true,
-      description: "UUID of the project to translate"
+      description: "Project name (subdirectory name)"
     })
     .strict()
     .parse();
 
-  return {
-    projectId: argv["project-id"]
-  };
+  return { project: argv.project };
 }
 
 async function main(): Promise<void> {
   const args = await parseCliArgs();
   const supabase = getSupabaseAdminClient();
 
-  const { data: project, error: projectError } = await supabase
-    .from("projects")
-    .select("id,source_lang,target_lang")
-    .eq("id", args.projectId)
-    .single<ProjectRow>();
-
-  if (projectError || !project) {
-    throw new Error(`Project not found: ${args.projectId}`);
-  }
+  const project = await resolveProject(supabase, args.project);
 
   const { data: units, error: unitsError } = await supabase
     .from("units")
     .select("id,unit_key,resname,restype,source_text")
-    .eq("project_id", args.projectId)
+    .eq("project_id", project.id)
     .is("machine_text", null)
     .order("file_id", { ascending: true })
     .order("unit_key", { ascending: true })
@@ -78,7 +63,7 @@ async function main(): Promise<void> {
     throw new Error(`Failed to load units: ${unitsError?.message ?? "unknown error"}`);
   }
 
-  console.log(`[translate] Project ${args.projectId} (${project.source_lang} -> ${project.target_lang})`);
+  console.log(`[translate] Project "${project.name}" (${project.source_lang} -> ${project.target_lang})`);
   console.log(`[translate] Units pending translation: ${units.length}`);
 
   let translated = 0;
