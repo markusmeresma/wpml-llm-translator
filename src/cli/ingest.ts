@@ -6,6 +6,7 @@ import { hideBin } from "yargs/helpers";
 
 import { getEnv } from "../lib/env.js";
 import { getSupabaseAdminClient } from "../lib/supabase.js";
+import { isAcfLayoutUnit } from "../lib/acf-layout-filter.js";
 import { parseXliffFile } from "../lib/xliff-parser.js";
 
 import { type SupabaseClient } from "@supabase/supabase-js";
@@ -126,6 +127,11 @@ async function ingestProject(
     let insertedUnitCount = 0;
 
     for (const unit of parsed.units) {
+      if (isAcfLayoutUnit(unit.unitKey, unit.sourceText)) {
+        console.log(`[ingest]   Skipping ACF layout key "${unit.unitKey}" (value: "${unit.sourceText}")`);
+        continue;
+      }
+
       if (unit.segments && unit.sourceHtmlTemplate) {
         // Compound unit: insert parent with template, then sub-units
         const { data: parentRow, error: parentError } = await supabase
