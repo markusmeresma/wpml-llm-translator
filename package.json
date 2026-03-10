@@ -13,6 +13,7 @@
     "test": "tsx --test src/**/*.test.ts",
     "start": "node dist/api/server.js",
     "ingest": "tsx src/cli/ingest.ts",
+    "scrape": "tsx src/cli/scrape.ts",
     "translate": "tsx src/cli/translate.ts",
     "rebuild": "tsx src/cli/rebuild.ts"
   },
