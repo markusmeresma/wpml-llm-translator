@@ -1,3 +1,5 @@
+import * as cheerio from "cheerio";
+
 export interface WpProduct {
   id: number;
   slug: string;
@@ -11,6 +13,11 @@ export interface WpProduct {
   excerpt: {
     rendered: string;
   };
+}
+
+export interface ProductPageExtras {
+  features: string | null;
+  installation: string | null;
 }
 
 const PRODUCTS_PER_PAGE = 100;
@@ -60,4 +67,41 @@ export async function fetchAllProducts(baseUrl: string, lang: string): Promise<W
   );
 
   return [firstPage, ...remainingPages].flatMap((page) => page.products);
+}
+
+export async function scrapeProductPageExtras(productUrl: string): Promise<ProductPageExtras> {
+  const response = await fetch(productUrl);
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch product page ${productUrl}: ${response.status} ${response.statusText}`);
+  }
+
+  const html = await response.text();
+  const $ = cheerio.load(html);
+  const pointsSections = $("div.product-content__points ul");
+
+  const extractList = (index: number): string | null => {
+    const section = pointsSections.eq(index);
+
+    if (section.length === 0) {
+      return null;
+    }
+
+    const items: string[] = [];
+
+    section.find("li").each((_, el) => {
+      const text = $(el).text().trim();
+
+      if (text) {
+        items.push(text);
+      }
+    });
+
+    return items.length > 0 ? `<ul>\n${items.map((item) => `<li>${item}</li>`).join("\n")}\n</ul>` : null;
+  };
+
+  return {
+    features: extractList(0),
+    installation: extractList(1)
+  };
 }

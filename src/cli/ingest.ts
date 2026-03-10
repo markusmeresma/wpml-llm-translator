@@ -239,7 +239,22 @@ async function main(): Promise<void> {
     console.log(`[ingest] Discovered ${projectNames.length} project(s): ${projectNames.join(", ")}`);
   }
 
+  const { data: existingProjects, error: existingError } = await supabase
+    .from("projects")
+    .select("name");
+
+  if (existingError) {
+    throw new Error(`Failed to query existing projects: ${existingError.message}`);
+  }
+
+  const existingNames = new Set((existingProjects ?? []).map((row: { name: string }) => row.name));
+
   for (const name of projectNames) {
+    if (existingNames.has(name)) {
+      console.log(`[ingest] Skipping "${name}" — already ingested`);
+      continue;
+    }
+
     const dir = path.join(env.inboxDir, name);
     await ingestProject(supabase, name, dir, args.sourceLang, args.targetLang);
   }

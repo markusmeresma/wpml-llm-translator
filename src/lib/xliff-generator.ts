@@ -1,7 +1,8 @@
-import type { WpProduct } from "./wp-client.js";
+import type { WpProduct, ProductPageExtras } from "./wp-client.js";
 
 export interface GenerateProductXliffInput {
   product: WpProduct;
+  extras?: ProductPageExtras;
   sourceLang: string;
   targetLang: string;
 }
@@ -51,6 +52,14 @@ export function generateProductXliff(input: GenerateProductXliffInput): string {
 
   if (excerpt.trim()) {
     units.push(renderTransUnit("excerpt", excerpt));
+  }
+
+  if (input.extras?.features) {
+    units.push(renderTransUnit("features", input.extras.features));
+  }
+
+  if (input.extras?.installation) {
+    units.push(renderTransUnit("installation", input.extras.installation));
   }
 
   return [

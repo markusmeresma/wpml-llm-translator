@@ -6,7 +6,7 @@ import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 
 import { loadScrapeConfig } from "../lib/scrape-config.js";
-import { fetchAllProducts } from "../lib/wp-client.js";
+import { fetchAllProducts, scrapeProductPageExtras } from "../lib/wp-client.js";
 import { generateProductXliff } from "../lib/xliff-generator.js";
 
 dotenv.config();
@@ -127,8 +127,18 @@ async function main(): Promise<void> {
       continue;
     }
 
+    let extras;
+
+    try {
+      extras = await scrapeProductPageExtras(product.link);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "unknown error";
+      console.warn(`[scrape] Warning: could not scrape page extras for ${product.slug}: ${msg}`);
+    }
+
     const xml = generateProductXliff({
       product,
+      extras,
       sourceLang: args.sourceLang,
       targetLang: args.targetLang
     });
