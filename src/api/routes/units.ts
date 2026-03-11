@@ -18,6 +18,7 @@ interface UnitRow {
   updated_at: string;
   parent_unit_id: string | null;
   segment_index: number | null;
+  canonical_unit_id: string | null;
 }
 
 interface UnitPatchRequest {
@@ -38,7 +39,7 @@ router.get("/:id", async (req, res) => {
   const { data, error } = await supabase
     .from("units")
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,canonical_unit_id"
     )
     .eq("id", unitId)
     .single<UnitRow>();
@@ -75,13 +76,18 @@ router.patch("/:id", async (req, res) => {
   const { data: currentUnit, error: currentUnitError } = await supabase
     .from("units")
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,canonical_unit_id"
     )
     .eq("id", unitId)
     .single<UnitRow>();
 
   if (currentUnitError || !currentUnit) {
     res.status(404).json({ error: `Unit not found: ${unitId}` });
+    return;
+  }
+
+  if (currentUnit.canonical_unit_id) {
+    res.status(400).json({ error: "Cannot edit an alias unit. Edit the canonical unit instead." });
     return;
   }
 
@@ -118,7 +124,7 @@ router.patch("/:id", async (req, res) => {
     .update(updatePayload)
     .eq("id", unitId)
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,canonical_unit_id"
     )
     .single<UnitRow>();
 
@@ -126,6 +132,12 @@ router.patch("/:id", async (req, res) => {
     res.status(500).json({ error: updateError?.message ?? "Failed to update unit" });
     return;
   }
+
+  // Sync status to all alias units pointing at this canonical
+  await supabase
+    .from("units")
+    .update({ status: updatedUnit.status, updated_at: updatedUnit.updated_at })
+    .eq("canonical_unit_id", unitId);
 
   res.json(updatedUnit);
 });

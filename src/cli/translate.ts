@@ -46,6 +46,7 @@ async function translateProject(supabase: SupabaseClient, project: ProjectInfo):
     .eq("project_id", project.id)
     .is("machine_text", null)
     .is("source_html_template", null)
+    .is("canonical_unit_id", null)
     .order("file_id", { ascending: true })
     .order("unit_key", { ascending: true })
     .returns<UnitRow[]>();

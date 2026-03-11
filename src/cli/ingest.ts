@@ -101,6 +101,11 @@ async function ingestProject(
     throw new Error(`Failed to create project "${name}": ${projectError?.message ?? "unknown error"}`);
   }
 
+  // Dedup maps: source_text → canonical unit id
+  const seenTexts = new Map<string, string>();
+  // For compound parents: source_text → (segment_index → canonical segment id)
+  const seenSegments = new Map<string, Map<number, string>>();
+
   let totalUnits = 0;
   for (const fileKey of xliffFiles) {
     const fullPath = path.join(dir, fileKey);
@@ -134,6 +139,8 @@ async function ingestProject(
 
       if (unit.segments && unit.sourceHtmlTemplate) {
         // Compound unit: insert parent with template, then sub-units
+        const canonicalParentId = seenTexts.get(unit.sourceText) ?? null;
+
         const { data: parentRow, error: parentError } = await supabase
           .from("units")
           .insert({
@@ -144,7 +151,8 @@ async function ingestProject(
             restype: unit.restype,
             source_text: unit.sourceText,
             source_html_template: unit.sourceHtmlTemplate,
-            machine_text: null
+            machine_text: null,
+            canonical_unit_id: canonicalParentId
           })
           .select("id")
           .single<{ id: string }>();
@@ -155,44 +163,97 @@ async function ingestProject(
           );
         }
 
-        const subUnits = unit.segments.map((seg) => ({
-          project_id: project.id,
-          file_id: fileRecord.id,
-          unit_key: `${unit.unitKey}::seg-${seg.index}`,
-          resname: unit.resname ? `${unit.resname} [${seg.index}]` : null,
-          restype: unit.restype,
-          source_text: seg.text,
-          machine_text: null,
-          parent_unit_id: parentRow.id,
-          segment_index: seg.index
-        }));
+        if (canonicalParentId) {
+          // Alias: resolve segment canonical ids from the map
+          const canonicalSegMap = seenSegments.get(unit.sourceText);
+          const subUnits = unit.segments.map((seg) => ({
+            project_id: project.id,
+            file_id: fileRecord.id,
+            unit_key: `${unit.unitKey}::seg-${seg.index}`,
+            resname: unit.resname ? `${unit.resname} [${seg.index}]` : null,
+            restype: unit.restype,
+            source_text: seg.text,
+            machine_text: null,
+            parent_unit_id: parentRow.id,
+            segment_index: seg.index,
+            canonical_unit_id: canonicalSegMap?.get(seg.index) ?? null
+          }));
 
-        const { error: subError } = await supabase.from("units").insert(subUnits);
+          const { error: subError } = await supabase.from("units").insert(subUnits);
 
-        if (subError) {
-          throw new Error(
-            `Failed to insert sub-units for ${unit.unitKey}: ${subError.message}`
+          if (subError) {
+            throw new Error(
+              `Failed to insert sub-units for ${unit.unitKey}: ${subError.message}`
+            );
+          }
+
+          insertedUnitCount += 1 + subUnits.length;
+          console.log(
+            `[ingest]   Compound unit "${unit.unitKey}" → ${subUnits.length} segment(s) (alias)`
+          );
+        } else {
+          // Canonical: insert segments and populate maps
+          const subUnits = unit.segments.map((seg) => ({
+            project_id: project.id,
+            file_id: fileRecord.id,
+            unit_key: `${unit.unitKey}::seg-${seg.index}`,
+            resname: unit.resname ? `${unit.resname} [${seg.index}]` : null,
+            restype: unit.restype,
+            source_text: seg.text,
+            machine_text: null,
+            parent_unit_id: parentRow.id,
+            segment_index: seg.index
+          }));
+
+          const { data: subRows, error: subError } = await supabase
+            .from("units")
+            .insert(subUnits)
+            .select("id,segment_index")
+            .returns<{ id: string; segment_index: number }[]>();
+
+          if (subError || !subRows) {
+            throw new Error(
+              `Failed to insert sub-units for ${unit.unitKey}: ${subError?.message ?? "unknown error"}`
+            );
+          }
+
+          seenTexts.set(unit.sourceText, parentRow.id);
+          const segMap = new Map<number, string>();
+          for (const row of subRows) {
+            segMap.set(row.segment_index, row.id);
+          }
+          seenSegments.set(unit.sourceText, segMap);
+
+          insertedUnitCount += 1 + subUnits.length;
+          console.log(
+            `[ingest]   Compound unit "${unit.unitKey}" → ${subUnits.length} segment(s)`
           );
         }
-
-        insertedUnitCount += 1 + subUnits.length;
-        console.log(
-          `[ingest]   Compound unit "${unit.unitKey}" → ${subUnits.length} segment(s)`
-        );
       } else {
         // Regular unit
-        const { error: unitError } = await supabase.from("units").insert({
-          project_id: project.id,
-          file_id: fileRecord.id,
-          unit_key: unit.unitKey,
-          resname: unit.resname,
-          restype: unit.restype,
-          source_text: unit.sourceText,
-          machine_text: null
-        });
+        const canonicalId = seenTexts.get(unit.sourceText) ?? null;
 
-        if (unitError) {
-          throw new Error(`Failed to insert unit ${unit.unitKey}: ${unitError.message}`);
+        const { data: unitRow, error: unitError } = await supabase
+          .from("units")
+          .insert({
+            project_id: project.id,
+            file_id: fileRecord.id,
+            unit_key: unit.unitKey,
+            resname: unit.resname,
+            restype: unit.restype,
+            source_text: unit.sourceText,
+            machine_text: null,
+            canonical_unit_id: canonicalId
+          })
+          .select("id")
+          .single<{ id: string }>();
+
+        if (unitError || !unitRow) {
+          throw new Error(`Failed to insert unit ${unit.unitKey}: ${unitError?.message ?? "unknown error"}`);
+        }
+
+        if (!canonicalId) {
+          seenTexts.set(unit.sourceText, unitRow.id);
         }
 
         insertedUnitCount += 1;

@@ -31,9 +31,16 @@ interface UnitRow {
   source_html_template: string | null;
   parent_unit_id: string | null;
   segment_index: number | null;
+  canonical_unit_id: string | null;
 }
 
-function getFinalText(unit: UnitRow): string {
+function getFinalText(unit: UnitRow, canonicalMap: Map<string, UnitRow>): string {
+  if (unit.canonical_unit_id) {
+    const canonical = canonicalMap.get(unit.canonical_unit_id);
+    if (canonical) {
+      return canonical.review_text ?? canonical.machine_text ?? "";
+    }
+  }
   return unit.review_text ?? unit.machine_text ?? "";
 }
 
@@ -66,7 +73,7 @@ async function main(): Promise<void> {
       .returns<FileRow[]>(),
     supabase
       .from("units")
-      .select("id,file_id,unit_key,machine_text,review_text,status,source_html_template,parent_unit_id,segment_index")
+      .select("id,file_id,unit_key,machine_text,review_text,status,source_html_template,parent_unit_id,segment_index,canonical_unit_id")
       .eq("project_id", project.id)
       .returns<UnitRow[]>()
   ]);
@@ -86,8 +93,17 @@ async function main(): Promise<void> {
     throw new Error(`No files found for project "${project.name}"`);
   }
 
+  // Build lookup map for canonical units (non-aliases)
+  const canonicalMap = new Map<string, UnitRow>();
+  for (const unit of units) {
+    if (!unit.canonical_unit_id) {
+      canonicalMap.set(unit.id, unit);
+    }
+  }
+
   // Compound parents don't need to be verified themselves — their sub-units do
-  const verifiableUnits = units.filter((unit) => !unit.source_html_template);
+  // Aliases don't need to be verified — they read through to their canonical
+  const verifiableUnits = units.filter((unit) => !unit.source_html_template && !unit.canonical_unit_id);
   const notVerifiedUnits = verifiableUnits.filter((unit) => unit.status !== "verified");
 
   if (notVerifiedUnits.length > 0) {
@@ -123,7 +139,7 @@ async function main(): Promise<void> {
       const segments = new Map<number, string>();
       for (const sub of subUnits) {
         if (sub.segment_index !== null) {
-          segments.set(sub.segment_index, getFinalText(sub));
+          segments.set(sub.segment_index, getFinalText(sub, canonicalMap));
         }
       }
 
@@ -134,7 +150,7 @@ async function main(): Promise<void> {
     // Regular units (not compound parents, not sub-units)
     for (const unit of fileUnits) {
       if (!unit.source_html_template && !unit.parent_unit_id) {
-        translationsByUnitKey.set(unit.unit_key, getFinalText(unit));
+        translationsByUnitKey.set(unit.unit_key, getFinalText(unit, canonicalMap));
       }
     }
 

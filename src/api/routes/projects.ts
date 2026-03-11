@@ -62,6 +62,7 @@ router.get("/", async (_req, res) => {
     .from("units")
     .select("project_id,status")
     .is("source_html_template", null)
+    .is("canonical_unit_id", null)
     .returns<UnitCountRow[]>();
 
   if (unitError || !unitRows) {
@@ -114,12 +115,14 @@ router.get("/:id", async (req, res) => {
       .from("units")
       .select("*", { count: "exact", head: true })
       .eq("project_id", projectId)
-      .is("source_html_template", null),
+      .is("source_html_template", null)
+      .is("canonical_unit_id", null),
     supabase
       .from("units")
       .select("*", { count: "exact", head: true })
       .eq("project_id", projectId)
       .is("source_html_template", null)
+      .is("canonical_unit_id", null)
       .eq("status", "verified")
   ]);
 
@@ -162,6 +165,7 @@ router.get("/:id/units", async (req, res) => {
     )
     .eq("project_id", projectId)
     .is("source_html_template", null)
+    .is("canonical_unit_id", null)
     .range(offset, offset + limit - 1)
     .order("updated_at", { ascending: true });
 
@@ -169,7 +173,8 @@ router.get("/:id/units", async (req, res) => {
     .from("units")
     .select("*", { count: "exact", head: true })
     .eq("project_id", projectId)
-    .is("source_html_template", null);
+    .is("source_html_template", null)
+    .is("canonical_unit_id", null);
 
   if (status) {
     dataQuery = dataQuery.eq("status", String(status));
@@ -209,12 +214,14 @@ router.get("/:id/readiness", async (req, res) => {
       .from("units")
       .select("*", { count: "exact", head: true })
       .eq("project_id", projectId)
-      .is("source_html_template", null),
+      .is("source_html_template", null)
+      .is("canonical_unit_id", null),
     supabase
       .from("units")
       .select("*", { count: "exact", head: true })
       .eq("project_id", projectId)
       .is("source_html_template", null)
+      .is("canonical_unit_id", null)
       .eq("status", "verified")
   ]);
 
