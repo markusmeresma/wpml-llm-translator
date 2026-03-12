@@ -13,6 +13,7 @@ interface ProjectRow {
 interface UnitCountRow {
   project_id: string;
   status: "todo" | "in_review" | "verified";
+  human_edited: boolean;
 }
 
 interface UnitRow {
@@ -27,6 +28,7 @@ interface UnitRow {
   review_text: string | null;
   status: "todo" | "in_review" | "verified";
   updated_at: string;
+  human_edited: boolean;
 }
 
 const router = Router();
@@ -60,7 +62,7 @@ router.get("/", async (_req, res) => {
 
   const { data: unitRows, error: unitError } = await supabase
     .from("units")
-    .select("project_id,status")
+    .select("project_id,status,human_edited")
     .is("source_html_template", null)
     .is("canonical_unit_id", null)
     .returns<UnitCountRow[]>();
@@ -70,26 +72,31 @@ router.get("/", async (_req, res) => {
     return;
   }
 
-  const countsByProject = new Map<string, { total: number; verified: number }>();
+  const countsByProject = new Map<string, { total: number; verified: number; human_edited: number }>();
 
   for (const row of unitRows) {
-    const counts = countsByProject.get(row.project_id) ?? { total: 0, verified: 0 };
+    const counts = countsByProject.get(row.project_id) ?? { total: 0, verified: 0, human_edited: 0 };
     counts.total += 1;
 
     if (row.status === "verified") {
       counts.verified += 1;
     }
 
+    if (row.human_edited) {
+      counts.human_edited += 1;
+    }
+
     countsByProject.set(row.project_id, counts);
   }
 
   const enriched = projects.map((project) => {
-    const counts = countsByProject.get(project.id) ?? { total: 0, verified: 0 };
+    const counts = countsByProject.get(project.id) ?? { total: 0, verified: 0, human_edited: 0 };
 
     return {
       ...project,
       total_units: counts.total,
-      verified_units: counts.verified
+      verified_units: counts.verified,
+      human_edited_units: counts.human_edited
     };
   });
 
@@ -110,7 +117,7 @@ router.get("/:id", async (req, res) => {
     return;
   }
 
-  const [totalResult, verifiedResult] = await Promise.all([
+  const [totalResult, verifiedResult, humanEditedResult] = await Promise.all([
     supabase
       .from("units")
       .select("*", { count: "exact", head: true })
@@ -123,12 +130,19 @@ router.get("/:id", async (req, res) => {
       .eq("project_id", projectId)
       .is("source_html_template", null)
       .is("canonical_unit_id", null)
-      .eq("status", "verified")
+      .eq("status", "verified"),
+    supabase
+      .from("units")
+      .select("*", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .is("source_html_template", null)
+      .is("canonical_unit_id", null)
+      .eq("human_edited", true)
   ]);
 
-  if (totalResult.error || verifiedResult.error) {
+  if (totalResult.error || verifiedResult.error || humanEditedResult.error) {
     res.status(500).json({
-      error: totalResult.error?.message ?? verifiedResult.error?.message ?? "Failed to compute unit counts"
+      error: totalResult.error?.message ?? verifiedResult.error?.message ?? humanEditedResult.error?.message ?? "Failed to compute unit counts"
     });
     return;
   }
@@ -136,7 +150,8 @@ router.get("/:id", async (req, res) => {
   res.json({
     ...project,
     total_units: totalResult.count ?? 0,
-    verified_units: verifiedResult.count ?? 0
+    verified_units: verifiedResult.count ?? 0,
+    human_edited_units: humanEditedResult.count ?? 0
   });
 });
 
@@ -161,7 +176,7 @@ router.get("/:id/units", async (req, res) => {
   let dataQuery = supabase
     .from("units")
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,human_edited"
     )
     .eq("project_id", projectId)
     .is("source_html_template", null)
@@ -209,7 +224,7 @@ router.get("/:id/units", async (req, res) => {
 router.get("/:id/readiness", async (req, res) => {
   const projectId = req.params.id;
 
-  const [totalResult, verifiedResult] = await Promise.all([
+  const [totalResult, verifiedResult, humanEditedResult] = await Promise.all([
     supabase
       .from("units")
       .select("*", { count: "exact", head: true })
@@ -222,24 +237,33 @@ router.get("/:id/readiness", async (req, res) => {
       .eq("project_id", projectId)
       .is("source_html_template", null)
       .is("canonical_unit_id", null)
-      .eq("status", "verified")
+      .eq("status", "verified"),
+    supabase
+      .from("units")
+      .select("*", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .is("source_html_template", null)
+      .is("canonical_unit_id", null)
+      .eq("human_edited", true)
   ]);
 
-  if (totalResult.error || verifiedResult.error) {
+  if (totalResult.error || verifiedResult.error || humanEditedResult.error) {
     res.status(500).json({
-      error: totalResult.error?.message ?? verifiedResult.error?.message ?? "Failed to compute readiness"
+      error: totalResult.error?.message ?? verifiedResult.error?.message ?? humanEditedResult.error?.message ?? "Failed to compute readiness"
     });
     return;
   }
 
   const totalUnits = totalResult.count ?? 0;
   const verifiedUnits = verifiedResult.count ?? 0;
+  const humanEditedUnits = humanEditedResult.count ?? 0;
   const remainingUnits = Math.max(totalUnits - verifiedUnits, 0);
 
   res.json({
     ready: totalUnits > 0 && verifiedUnits === totalUnits,
     total_units: totalUnits,
     verified_units: verifiedUnits,
+    human_edited_units: humanEditedUnits,
     remaining_units: remainingUnits
   });
 });

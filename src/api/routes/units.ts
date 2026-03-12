@@ -19,6 +19,7 @@ interface UnitRow {
   parent_unit_id: string | null;
   segment_index: number | null;
   canonical_unit_id: string | null;
+  human_edited: boolean;
 }
 
 interface UnitPatchRequest {
@@ -39,7 +40,7 @@ router.get("/:id", async (req, res) => {
   const { data, error } = await supabase
     .from("units")
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,canonical_unit_id"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,canonical_unit_id,human_edited"
     )
     .eq("id", unitId)
     .single<UnitRow>();
@@ -76,7 +77,7 @@ router.patch("/:id", async (req, res) => {
   const { data: currentUnit, error: currentUnitError } = await supabase
     .from("units")
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,canonical_unit_id"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,canonical_unit_id,human_edited"
     )
     .eq("id", unitId)
     .single<UnitRow>();
@@ -109,12 +110,13 @@ router.patch("/:id", async (req, res) => {
     return;
   }
 
-  const updatePayload: Record<string, string> = {
+  const updatePayload: Record<string, string | boolean> = {
     updated_at: new Date().toISOString()
   };
 
   if (hasReviewText) {
     updatePayload.review_text = body.review_text ?? "";
+    updatePayload.human_edited = body.review_text !== currentUnit.machine_text;
   }
 
   updatePayload.status = nextStatus;
@@ -124,7 +126,7 @@ router.patch("/:id", async (req, res) => {
     .update(updatePayload)
     .eq("id", unitId)
     .select(
-      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,canonical_unit_id"
+      "id,project_id,file_id,unit_key,resname,restype,source_text,machine_text,review_text,status,updated_at,parent_unit_id,segment_index,canonical_unit_id,human_edited"
     )
     .single<UnitRow>();
 
